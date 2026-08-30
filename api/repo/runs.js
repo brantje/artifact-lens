@@ -1,16 +1,13 @@
 const { gh, requireAuth, json } = require('../_lib');
 
 module.exports = async (req, res) => {
-  const t = requireAuth(req, res);
+  const t = await requireAuth(req, res);
   if (!t) return;
 
   const { repo, branch } = req.query;
   if (!/^[^/]+\/[^/]+$/.test(repo || '')) return json(res, 400, { error: 'invalid_repo' });
 
   try {
-    // Fetch branch runs once, then scan the repository artifact feed in pages.
-    // GitHub artifact objects include workflow_run.id, so this avoids the old
-    // N+1 pattern of one artifact request for every workflow run.
     const rr = await gh(
       `/repos/${repo}/actions/runs?branch=${encodeURIComponent(branch || '')}&per_page=50`,
       t
@@ -24,8 +21,6 @@ module.exports = async (req, res) => {
     const oldestRunAt = Math.min(...runs.map((run) => Date.parse(run.created_at) || Date.now()));
     const artifactsByRun = new Map();
 
-    // 100 is GitHub's maximum page size. Usually one page is enough. Continue
-    // only while artifacts are still new enough to belong to the selected runs.
     for (let page = 1; page <= 5; page++) {
       const ar = await gh(`/repos/${repo}/actions/artifacts?per_page=100&page=${page}`, t);
       const artifactData = await ar.json();
