@@ -1,5 +1,6 @@
 (() => {
   const originalOpen = window.openArtifactFilePreviewEncoded;
+  const originalClose = window.closeArtifactFilePreview;
   const modal = document.querySelector('#filePreviewModal');
   const title = document.querySelector('#filePreviewTitle');
   const meta = document.querySelector('#filePreviewMeta');
@@ -22,8 +23,8 @@
   };
   const status = (value) => {
     const v = String(value || '').toLowerCase();
-    if (['passed','pass','success','succeeded','ok'].includes(v)) return 'passed';
-    if (['skipped','skip','pending','disabled','notexecuted','ignored','todo'].includes(v)) return 'skipped';
+    if (['passed','pass','success','succeeded','ok','expected','flaky','xpassed'].includes(v)) return 'passed';
+    if (['skipped','skip','pending','disabled','notexecuted','ignored','todo','xfailed'].includes(v)) return 'skipped';
     return 'failed';
   };
   const makeTest = (name, result = {}) => ({
@@ -304,21 +305,37 @@
     body.replaceChildren(mode === 'rendered' ? renderReport(state.report) : renderSource(state.source));
   }
 
+  function resetReportState() {
+    state = null;
+    renderedTab.textContent = 'Rendered';
+    sourceTab.textContent = 'Source';
+  }
+
   function candidate(file) {
     return /\.(?:xml|trx|nunit|json|jsonl|tap|t)$/i.test(file.name || '');
   }
 
   window.openArtifactFilePreviewEncoded = async function (encodedFile) {
     const file = JSON.parse(decodeURIComponent(encodedFile));
-    if (!candidate(file) || Number(file.size || 0) > 5 * 1024 * 1024 || !window.S?.artifact) return originalOpen(encodedFile);
+    if (!candidate(file) || Number(file.size || 0) > 5 * 1024 * 1024 || typeof S === 'undefined' || !S.artifact) {
+      resetReportState();
+      return originalOpen(encodedFile);
+    }
 
     try {
       const response = await fetch(artifactFileUrl(S.artifact.id, file.name), { headers: { Accept: 'text/plain,*/*;q=0.1' } });
-      if (!response.ok) return originalOpen(encodedFile);
+      if (!response.ok) {
+        resetReportState();
+        return originalOpen(encodedFile);
+      }
       const source = await response.text();
       const report = parseReport(file, source);
-      if (!report || !report.suites.length) return originalOpen(encodedFile);
+      if (!report || !report.suites.length) {
+        resetReportState();
+        return originalOpen(encodedFile);
+      }
 
+      originalClose?.();
       state = { file, source, report, mode: 'rendered' };
       title.textContent = file.name.split('/').pop();
       meta.textContent = `${file.name} · ${Math.round(file.size / 1024)} KB · ${report.format}`;
@@ -330,11 +347,16 @@
       document.body.style.overflow = 'hidden';
       showMode('rendered');
     } catch {
+      resetReportState();
       originalOpen(encodedFile);
     }
   };
 
+  window.closeArtifactFilePreview = function () {
+    resetReportState();
+    originalClose?.();
+  };
+
   renderedTab.addEventListener('click', () => { if (state) showMode('rendered'); });
   sourceTab.addEventListener('click', () => { if (state) showMode('source'); });
-  document.querySelector('#filePreviewClose')?.addEventListener('click', () => { state = null; renderedTab.textContent = 'Rendered'; sourceTab.textContent = 'Source'; });
 })();
