@@ -6,20 +6,31 @@ const lightboxImage = document.querySelector('#lightboxImage');
 const lightboxMeta = document.querySelector('#lightboxMeta');
 const lightboxPrev = document.querySelector('#lightboxPrev');
 const lightboxNext = document.querySelector('#lightboxNext');
+const shareModal = document.querySelector('#shareModal');
+const shareScope = document.querySelector('#shareScope');
+const shareExpiry = document.querySelector('#shareExpiry');
+const shareResult = document.querySelector('#shareResult');
+const shareUrl = document.querySelector('#shareUrl');
+const shareCreate = document.querySelector('#shareCreate');
 
 let S = { repo: null, branch: null, run: null, artifact: null };
 let currentImages = [];
 let lightboxIndex = 0;
 let navigatingHistory = false;
+let viewerMode = 'user';
+let shareInfo = null;
 
-async function api(url) {
+async function api(url, options = {}) {
   err.textContent = '';
-  const r = await fetch(url);
+  const headers = { ...(options.headers || {}) };
+  if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+  const r = await fetch(url, { ...options, headers });
+  let d = null;
+  try { d = await r.json(); } catch { d = {}; }
   if (r.status === 401) {
     renderLogin();
     throw new Error('AUTH');
   }
-  const d = await r.json();
   if (!r.ok) throw new Error(d.error || JSON.stringify(d));
   return d;
 }
@@ -90,14 +101,14 @@ function parseRoute() {
     } else if (parts[i] === 'artifact' && parts[i + 1]) {
       route.artifactId = parts[i + 1];
       i += 2;
-    } else {
-      break;
-    }
+    } else break;
   }
   return route;
 }
 
 function renderLogin() {
+  viewerMode = 'guest';
+  shareInfo = null;
   account.innerHTML = '';
   app.innerHTML = `
     <div class="login-panel">
@@ -114,10 +125,27 @@ function renderLogin() {
     </div>`;
 }
 
+function shareButton() {
+  return viewerMode === 'user' && S.repo ? '<button onclick="openShareDialog()">Share</button>' : '';
+}
+
+function viewActions() {
+  return `<div class="actions"><button onclick="refreshCurrent()">Refresh</button>${shareButton()}</div>`;
+}
+
 async function boot() {
   try {
     const me = await api('/api/me');
-    account.innerHTML = `<div class="login"><img class="avatar" src="${esc(me.avatar_url)}" alt=""><span>${esc(me.login)}</span><button onclick="refreshCurrent()">Refresh</button><button onclick="location.href='/api/auth/logout'">Log out</button></div>`;
+    if (me.shared) {
+      viewerMode = 'share';
+      shareInfo = me;
+      const expiry = me.expires_at ? ` · expires ${new Date(me.expires_at).toLocaleString()}` : '';
+      account.innerHTML = `<div class="login"><span class="badge shared">Shared ${esc(me.scope)} view</span><span class="muted share-account">${esc(me.repo)}${esc(expiry)}</span><button onclick="refreshCurrent()">Refresh</button><button onclick="location.href='/api/auth/login'">Sign in</button></div>`;
+    } else {
+      viewerMode = 'user';
+      shareInfo = null;
+      account.innerHTML = `<div class="login"><img class="avatar" src="${esc(me.avatar_url)}" alt=""><span>${esc(me.login)}</span><button onclick="refreshCurrent()">Refresh</button><button onclick="location.href='/api/auth/logout'">Log out</button></div>`;
+    }
     await restoreFromRoute();
   } catch (e) {
     if (e.message !== 'AUTH') {
@@ -129,22 +157,27 @@ async function boot() {
 
 async function showRepos(opt = {}) {
   closeLightbox();
+  closeShareDialog();
   S = { repo: null, branch: null, run: null, artifact: null };
   if (!opt.preserveRoute) setRoute(opt.replace);
   app.innerHTML = '<div class="muted">Loading repositories…</div>';
   try {
     const data = await api('/api/repos');
     const repos = data.repositories || [];
-    const canInstall = Boolean(data.install_available);
+    const shared = Boolean(data.shared || viewerMode === 'share');
+    const canInstall = !shared && Boolean(data.install_available);
     const installButton = canInstall ? '<button onclick="openInstallPopup()">Install / add repositories</button>' : '';
     const list = repos.length
       ? `<div class="grid">${repos.map((r) => `<div class="repo" onclick="pickRepoEncoded('${enc(r.full_name)}')"><div class="row"><strong>${esc(r.full_name)}</strong>${r.private ? '<span class="badge">private</span>' : ''}</div><div class="muted" style="margin-top:8px">${esc(r.description || 'No description')}</div><div class="muted" style="margin-top:10px;font-size:12px">Updated ${ago(r.updated_at)}</div></div>`).join('')}</div>`
       : `<div style="padding:28px 8px;text-align:center"><h3>No installed repositories</h3><p class="muted">Install Artifact Lens on one or more repositories, then refresh this list.</p>${installButton}</div>`;
     const configureHint = canInstall
       ? `<div class="repo-config-hint muted">Missing a repository? <button class="link-button" onclick="openInstallPopup()">Configure the GitHub App installation</button> to add or remove repositories.</div>`
-      : '';
+      : shared
+        ? `<div class="repo-config-hint muted">This anonymous link only exposes the repository and content included by the person who shared it.</div>`
+        : '';
+    const manual = shared ? '' : `<div style="margin:16px 0"><input placeholder="owner/repository" onkeydown="if(event.key==='Enter')pickRepo(this.value)"></div>`;
 
-    app.innerHTML = `<div class="row"><div><h2 style="margin:0">Repositories</h2><div class="muted">Repositories available through your GitHub App installations.</div></div><div class="actions"><button onclick="refreshCurrent()">Refresh</button>${installButton}</div></div><div style="margin:16px 0"><input placeholder="owner/repository" onkeydown="if(event.key==='Enter')pickRepo(this.value)"></div>${list}${configureHint}`;
+    app.innerHTML = `<div class="row"><div><h2 style="margin:0">${shared ? 'Shared repository' : 'Repositories'}</h2><div class="muted">${shared ? 'Repository available through this share link.' : 'Repositories available through your GitHub App installations.'}</div></div><div class="actions"><button onclick="refreshCurrent()">Refresh</button>${installButton}</div></div>${manual}${list}${configureHint}`;
     return repos;
   } catch (e) {
     err.textContent = e.message;
@@ -174,12 +207,13 @@ window.pickRepo = async function (repo, opt = {}) {
   repo = String(repo).trim();
   if (!/^[^/]+\/[^/]+$/.test(repo)) return;
   closeLightbox();
+  closeShareDialog();
   S = { repo, branch: null, run: null, artifact: null };
   if (!opt.preserveRoute) setRoute(opt.replace);
   app.innerHTML = '<div class="muted">Finding branches with artifacts…</div>';
   try {
     const rows = await api('/api/repo/branches?repo=' + encodeURIComponent(repo));
-    app.innerHTML = crumbs() + `<div class="row"><h2>Branches with artifacts</h2><button onclick="refreshCurrent()">Refresh</button></div><div class="grid">${rows.map((b) => `<div class="branch" onclick="pickBranchEncoded('${enc(b.branch)}')"><div class="row"><strong>${esc(b.branch)}</strong><span class="badge">${b.count} artifacts</span></div><div class="muted" style="margin-top:8px">Last artifact ${ago(b.updated_at)}</div></div>`).join('') || '<div class="muted">No artifacts found.</div>'}</div>`;
+    app.innerHTML = crumbs() + `<div class="row"><h2>Branches with artifacts</h2>${viewActions()}</div><div class="grid">${rows.map((b) => `<div class="branch" onclick="pickBranchEncoded('${enc(b.branch)}')"><div class="row"><strong>${esc(b.branch)}</strong><span class="badge">${b.count} artifacts</span></div><div class="muted" style="margin-top:8px">Last artifact ${ago(b.updated_at)}</div></div>`).join('') || '<div class="muted">No artifacts found.</div>'}</div>`;
     return rows;
   } catch (e) {
     err.textContent = e.message;
@@ -188,6 +222,7 @@ window.pickRepo = async function (repo, opt = {}) {
 
 window.pickBranch = async function (branch, opt = {}) {
   closeLightbox();
+  closeShareDialog();
   S.branch = String(branch);
   S.run = null;
   S.artifact = null;
@@ -195,7 +230,7 @@ window.pickBranch = async function (branch, opt = {}) {
   app.innerHTML = '<div class="muted">Loading workflow runs…</div>';
   try {
     const runs = await api('/api/repo/runs?repo=' + encodeURIComponent(S.repo) + '&branch=' + encodeURIComponent(S.branch));
-    app.innerHTML = crumbs() + `<div class="row"><h2>Runs</h2><button onclick="refreshCurrent()">Refresh</button></div><div class="grid">${runs.map((r) => { const status = r.conclusion || r.status; return `<div class="run" onclick="pickRunEncoded('${pack(r)}')"><div class="row"><strong>${esc(r.name)}</strong><span class="badge ${statusClass(status)}">${esc(status)}</span></div><div class="muted" style="margin-top:8px">${ago(r.updated_at)} · ${r.artifacts.length} artifact${r.artifacts.length !== 1 ? 's' : ''}</div><div class="muted" style="margin-top:6px;font-size:12px">${esc(r.head_sha.slice(0, 8))}</div></div>`; }).join('') || '<div class="muted">No artifact-bearing runs found.</div>'}</div>`;
+    app.innerHTML = crumbs() + `<div class="row"><h2>Runs</h2>${viewActions()}</div><div class="grid">${runs.map((r) => { const status = r.conclusion || r.status; return `<div class="run" onclick="pickRunEncoded('${pack(r)}')"><div class="row"><strong>${esc(r.name)}</strong><span class="badge ${statusClass(status)}">${esc(status)}</span></div><div class="muted" style="margin-top:8px">${ago(r.updated_at)} · ${r.artifacts.length} artifact${r.artifacts.length !== 1 ? 's' : ''}</div><div class="muted" style="margin-top:6px;font-size:12px">${esc(r.head_sha.slice(0, 8))}</div></div>`; }).join('') || '<div class="muted">No artifact-bearing runs found.</div>'}</div>`;
     return runs;
   } catch (e) {
     err.textContent = e.message;
@@ -204,10 +239,11 @@ window.pickBranch = async function (branch, opt = {}) {
 
 window.pickRun = function (run, opt = {}) {
   closeLightbox();
+  closeShareDialog();
   S.run = run;
   S.artifact = null;
   if (!opt.preserveRoute) setRoute(opt.replace);
-  app.innerHTML = crumbs() + `<div class="row"><h2>${esc(run.name)}</h2><button onclick="refreshCurrent()">Refresh</button></div><div class="grid">${run.artifacts.map((a) => `<div class="artifact" onclick="pickArtifactEncoded('${pack(a)}')"><strong>${esc(a.name)}</strong><div class="muted" style="margin-top:8px">${(a.size_in_bytes / 1048576).toFixed(1)} MB · ${ago(a.updated_at)}</div></div>`).join('')}</div>`;
+  app.innerHTML = crumbs() + `<div class="row"><h2>${esc(run.name)}</h2>${viewActions()}</div><div class="grid">${run.artifacts.map((a) => `<div class="artifact" onclick="pickArtifactEncoded('${pack(a)}')"><strong>${esc(a.name)}</strong><div class="muted" style="margin-top:8px">${(a.size_in_bytes / 1048576).toFixed(1)} MB · ${ago(a.updated_at)}</div></div>`).join('')}</div>`;
 };
 
 function artifactFileUrl(id, name, download = false) {
@@ -217,6 +253,7 @@ function artifactFileUrl(id, name, download = false) {
 
 window.pickArtifact = async function (artifact, opt = {}) {
   closeLightbox();
+  closeShareDialog();
   S.artifact = typeof artifact === 'object' ? artifact : { id: String(artifact), name: `Artifact ${artifact}` };
   if (!opt.preserveRoute) setRoute(opt.replace);
   app.innerHTML = crumbs() + `<h2>${esc(S.artifact.name)}</h2><div class="muted">Inspecting artifact…</div>`;
@@ -229,7 +266,7 @@ window.pickArtifact = async function (artifact, opt = {}) {
     const otherFiles = other.length
       ? `<h3>Other files</h3><div class="grid">${other.map((f) => `<div class="artifact other-file"><div><strong>${esc(f.name)}</strong><div class="muted" style="margin-top:6px">${Math.round(f.size / 1024)} KB</div></div><a class="download-button" href="${artifactFileUrl(id, f.name, true)}" download>Download</a></div>`).join('')}</div>`
       : '';
-    app.innerHTML = crumbs() + `<div class="row"><h2>${esc(S.artifact.name)}</h2><button onclick="refreshCurrent()">Refresh</button></div><div class="media">${media.map((f) => renderMedia(id, f)).join('') || '<div class="muted">No embeddable media detected.</div>'}</div>${otherFiles}`;
+    app.innerHTML = crumbs() + `<div class="row"><h2>${esc(S.artifact.name)}</h2>${viewActions()}</div><div class="media">${media.map((f) => renderMedia(id, f)).join('') || '<div class="muted">No embeddable media detected.</div>'}</div>${otherFiles}`;
     return files;
   } catch (e) {
     err.textContent = e.message;
@@ -277,15 +314,90 @@ window.closeLightbox = function () {
   document.body.style.overflow = '';
 };
 
+function availableShareScopes() {
+  const scopes = [];
+  if (S.artifact) scopes.push(['artifact', 'This artifact']);
+  if (S.run) scopes.push(['run', 'This workflow run']);
+  if (S.branch) scopes.push(['branch', 'This branch']);
+  if (S.repo) scopes.push(['repository', 'Entire repository']);
+  return scopes;
+}
+
+window.openShareDialog = function () {
+  if (viewerMode !== 'user' || !S.repo) return;
+  const scopes = availableShareScopes();
+  shareScope.innerHTML = scopes.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
+  shareExpiry.value = '7';
+  shareUrl.value = '';
+  shareResult.classList.add('hidden');
+  shareCreate.disabled = false;
+  shareCreate.textContent = 'Create link';
+  shareModal.classList.remove('hidden');
+};
+
+window.closeShareDialog = function () {
+  if (!shareModal) return;
+  shareModal.classList.add('hidden');
+};
+
+window.createShareLink = async function () {
+  if (viewerMode !== 'user' || !S.repo) return;
+  shareCreate.disabled = true;
+  shareCreate.textContent = 'Creating…';
+  try {
+    const data = await api('/api/share/create', {
+      method: 'POST',
+      body: JSON.stringify({
+        repo: S.repo,
+        scope: shareScope.value,
+        branch: S.branch,
+        run_id: S.run?.id || null,
+        artifact_id: S.artifact?.id || null,
+        expires: shareExpiry.value,
+      }),
+    });
+    shareUrl.value = data.url;
+    shareResult.classList.remove('hidden');
+    shareCreate.textContent = 'Create another link';
+  } catch (e) {
+    err.textContent = e.message;
+    shareCreate.textContent = 'Create link';
+  } finally {
+    shareCreate.disabled = false;
+  }
+};
+
+window.copyShareLink = async function () {
+  if (!shareUrl.value) return;
+  try {
+    await navigator.clipboard.writeText(shareUrl.value);
+    const btn = document.querySelector('#shareCopy');
+    if (btn) {
+      const old = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.textContent = old; }, 1200);
+    }
+  } catch {
+    shareUrl.focus();
+    shareUrl.select();
+    document.execCommand('copy');
+  }
+};
+
 lightbox.addEventListener('click', (e) => { if (e.target === lightbox) closeLightbox(); });
 lightbox.querySelector('.lightbox-close').addEventListener('click', closeLightbox);
 lightboxPrev.addEventListener('click', () => lightboxStep(-1));
 lightboxNext.addEventListener('click', () => lightboxStep(1));
+shareModal.addEventListener('click', (e) => { if (e.target === shareModal) closeShareDialog(); });
+shareModal.querySelector('.share-close').addEventListener('click', closeShareDialog);
 document.addEventListener('keydown', (e) => {
-  if (lightbox.classList.contains('hidden')) return;
-  if (e.key === 'Escape') closeLightbox();
-  if (e.key === 'ArrowLeft') lightboxStep(-1);
-  if (e.key === 'ArrowRight') lightboxStep(1);
+  if (!lightbox.classList.contains('hidden')) {
+    if (e.key === 'Escape') closeLightbox();
+    if (e.key === 'ArrowLeft') lightboxStep(-1);
+    if (e.key === 'ArrowRight') lightboxStep(1);
+    return;
+  }
+  if (!shareModal.classList.contains('hidden') && e.key === 'Escape') closeShareDialog();
 });
 
 function crumbs() {

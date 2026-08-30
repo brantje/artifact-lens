@@ -1,19 +1,23 @@
-const { gh, requireAuth, json } = require('../_lib');
+const { gh, requireRepoAccess, json } = require('../_lib');
 
 module.exports = async (req, res) => {
-  const t = await requireAuth(req, res);
-  if (!t) return;
-
   const { repo, branch } = req.query;
   if (!/^[^/]+\/[^/]+$/.test(repo || '')) return json(res, 400, { error: 'invalid_repo' });
+
+  const access = await requireRepoAccess(req, res, { repo, branch: String(branch || '') });
+  if (!access) return;
 
   try {
     const rr = await gh(
       `/repos/${repo}/actions/runs?branch=${encodeURIComponent(branch || '')}&per_page=50`,
-      t
+      access.token
     );
     const runData = await rr.json();
-    const runs = runData.workflow_runs || [];
+    let runs = runData.workflow_runs || [];
+
+    if (access.shared && ['run', 'artifact'].includes(access.share.scope)) {
+      runs = runs.filter((run) => String(run.id) === String(access.share.run_id));
+    }
 
     if (!runs.length) return json(res, 200, []);
 
@@ -22,13 +26,14 @@ module.exports = async (req, res) => {
     const artifactsByRun = new Map();
 
     for (let page = 1; page <= 5; page++) {
-      const ar = await gh(`/repos/${repo}/actions/artifacts?per_page=100&page=${page}`, t);
+      const ar = await gh(`/repos/${repo}/actions/artifacts?per_page=100&page=${page}`, access.token);
       const artifactData = await ar.json();
       const batch = artifactData.artifacts || [];
 
       for (const artifact of batch) {
         const runId = artifact.workflow_run?.id;
         if (!runId || !runIds.has(String(runId))) continue;
+        if (access.shared && access.share.scope === 'artifact' && String(artifact.id) !== String(access.share.artifact_id)) continue;
         if (!artifactsByRun.has(String(runId))) artifactsByRun.set(String(runId), []);
         artifactsByRun.get(String(runId)).push({
           id: artifact.id,

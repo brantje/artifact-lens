@@ -27,6 +27,28 @@
     <div id="lightboxMeta" class="lightbox-meta"></div>
   </div>
 </div>
+<div id="shareModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+  <div class="share-dialog">
+    <button class="share-close" aria-label="Close share dialog">×</button>
+    <h2 id="shareTitle">Share Artifact Lens view</h2>
+    <p class="muted">Anyone with the link can open the selected scope without signing in. GitHub credentials stay on the server.</p>
+    <label class="field-label" for="shareScope">Share</label>
+    <select id="shareScope"></select>
+    <label class="field-label" for="shareExpiry">Link expires</label>
+    <select id="shareExpiry">
+      <option value="1">In 1 day</option>
+      <option value="7" selected>In 7 days</option>
+      <option value="30">In 30 days</option>
+      <option value="never">Never</option>
+    </select>
+    <div class="share-note muted">The link is encrypted and restricted to the selected repository scope. Anonymous viewers cannot widen that scope.</div>
+    <div class="actions share-actions"><button id="shareCreate" class="primary" onclick="createShareLink()">Create link</button><button onclick="closeShareDialog()">Cancel</button></div>
+    <div id="shareResult" class="share-result hidden">
+      <label class="field-label" for="shareUrl">Share link</label>
+      <div class="share-copy-row"><input id="shareUrl" readonly><button id="shareCopy" onclick="copyShareLink()">Copy</button></div>
+    </div>
+  </div>
+</div>
 <script src="/app.js"></script>
 </body>
 </html>
