@@ -1,5 +1,6 @@
 const AdmZip = require('adm-zip');
 const { gh, requireRepoAccess, json } = require('../_lib');
+const { normalizeArtifactPathRequest } = require('../_artifact-path');
 
 const mime = (name) => ({
   png: 'image/png',
@@ -26,7 +27,7 @@ module.exports = async (req, res) => {
     return json(res, 400, { error: 'invalid_request' });
   }
 
-  const access = await requireRepoAccess(req, res, { repo, artifactId: String(id) });
+  const access = await requireRepoAccess(normalizeArtifactPathRequest(req), res, { repo, artifactId: String(id) });
   if (!access) return;
 
   try {
