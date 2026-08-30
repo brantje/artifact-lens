@@ -11,7 +11,7 @@ module.exports = async (req, res) => {
   if (!access) return;
 
   try {
-    const rr = await gh(`/repos/${repo}/actions/runs?branch=${encodeURIComponent(branch || '')}&per_page=50`, access.token);
+    const rr = await gh(`/repos/${repo}/actions/runs?branch=${encodeURIComponent(branch || '')}&per_page=100`, access.token);
     const runData = await rr.json();
     let runs = runData.workflow_runs || [];
 
@@ -50,12 +50,11 @@ module.exports = async (req, res) => {
       if (oldestArtifactAt && oldestArtifactAt < oldestRunAt) break;
     }
 
-    const out = runs.flatMap((run) => {
+    const out = runs.map((run) => {
       const artifacts = artifactsByRun.get(String(run.id)) || [];
       const active = run.status && run.status !== 'completed';
-      if (!artifacts.length && !active) return [];
       const commitMessage = String(run.head_commit?.message || '').split('\n')[0].trim();
-      return [{
+      return {
         id: run.id,
         run_number: run.run_number,
         run_attempt: run.run_attempt,
@@ -72,7 +71,7 @@ module.exports = async (req, res) => {
         html_url: run.html_url,
         head_sha: run.head_sha,
         artifacts,
-      }];
+      };
     });
 
     res.setHeader('Cache-Control', 'private, max-age=15');
