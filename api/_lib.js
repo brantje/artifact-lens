@@ -1,8 +1,10 @@
 const crypto = require('crypto');
+const { isRepoPublicArtifacts } = require('./_settings');
 
 const SESSION_COOKIE = 'gh_session';
 const SHARE_COOKIE = 'share_session';
 const installationTokenCache = new Map();
+const publicArtifactValidationCache = new Map();
 
 function secretKey(value, label) {
   if (!value) throw new Error(`${label} is not configured`);
@@ -253,6 +255,83 @@ async function installationToken(repo) {
   return data.token;
 }
 
+function publicArtifactRoute(req) {
+  const referer = String(req.headers.referer || '').trim();
+  if (!referer) return null;
+
+  try {
+    const url = new URL(referer);
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+    if (!host || url.host !== host) return null;
+
+    const rawParts = url.pathname.split('/').filter(Boolean);
+    if (rawParts.length !== 9) return null;
+    const parts = rawParts.map((part) => decodeURIComponent(part));
+    if (parts[0] !== 'repo' || parts[3] !== 'branch' || parts[5] !== 'run' || parts[7] !== 'artifact') return null;
+
+    const repo = `${parts[1]}/${parts[2]}`;
+    const branch = parts[4];
+    const runId = parts[6];
+    const artifactId = parts[8];
+    if (!/^[^/]+\/[^/]+$/.test(repo) || !branch || !/^\d+$/.test(runId) || !/^\d+$/.test(artifactId)) return null;
+
+    return {
+      repo,
+      scope: 'artifact',
+      branch,
+      run_id: runId,
+      artifact_id: artifactId,
+      expires_at: null,
+      public_artifact: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function validatePublicArtifactRoute(share, token) {
+  const cacheKey = `${share.repo}:${share.branch}:${share.run_id}:${share.artifact_id}`;
+  const cachedUntil = publicArtifactValidationCache.get(cacheKey) || 0;
+  if (cachedUntil > Date.now()) return true;
+
+  try {
+    const r = await gh(`/repos/${share.repo}/actions/artifacts/${share.artifact_id}`, token);
+    const artifact = await r.json();
+    const runId = artifact.workflow_run?.id ? String(artifact.workflow_run.id) : null;
+    const branch = artifact.workflow_run?.head_branch || null;
+    const valid = runId === String(share.run_id) && branch === share.branch;
+    if (valid) {
+      if (publicArtifactValidationCache.size > 500) publicArtifactValidationCache.clear();
+      publicArtifactValidationCache.set(cacheKey, Date.now() + 60 * 1000);
+    }
+    return valid;
+  } catch (e) {
+    if (e.status !== 404) console.error('Public artifact route validation failed', { repo: share.repo, artifact_id: share.artifact_id, error: e.message });
+    return false;
+  }
+}
+
+async function publicArtifactAccess(req, context = {}) {
+  const share = publicArtifactRoute(req);
+  if (!share) return null;
+
+  if (context.repo && context.repo !== share.repo) return null;
+  if (context.branch && context.branch !== share.branch) return null;
+  if (context.runId && String(context.runId) !== String(share.run_id)) return null;
+  if (context.artifactId && String(context.artifactId) !== String(share.artifact_id)) return null;
+
+  if (!(await isRepoPublicArtifacts(share.repo))) return null;
+
+  try {
+    const token = await installationToken(share.repo);
+    if (!(await validatePublicArtifactRoute(share, token))) return null;
+    return { token, shared: true, share, publicArtifact: true };
+  } catch (e) {
+    console.error('Public artifact access failed', { repo: share.repo, artifact_id: share.artifact_id, error: e.message });
+    return null;
+  }
+}
+
 function createShareToken(payload) {
   const share = {
     v: 1,
@@ -312,8 +391,11 @@ function shareCanonicalPath(share) {
 async function requireRepoAccess(req, res, context = {}) {
   if (readSession(req)) {
     const token = await requireAuth(req, res);
-    return token ? { token, shared: false, share: null } : null;
+    return token ? { token, shared: false, share: null, publicArtifact: false } : null;
   }
+
+  const publicAccess = await publicArtifactAccess(req, context);
+  if (publicAccess) return publicAccess;
 
   const share = readShareSession(req);
   if (!share) {
@@ -341,7 +423,7 @@ async function requireRepoAccess(req, res, context = {}) {
 
   try {
     const token = await installationToken(repo);
-    return { token, shared: true, share };
+    return { token, shared: true, share, publicArtifact: false };
   } catch (e) {
     json(res, e.status || 500, { error: e.message });
     return null;
@@ -368,6 +450,8 @@ module.exports = {
   requireAuth,
   githubAppJwt,
   installationToken,
+  publicArtifactRoute,
+  publicArtifactAccess,
   createShareToken,
   readShareToken,
   readShareSession,
