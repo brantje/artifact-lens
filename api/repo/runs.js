@@ -53,12 +53,14 @@ module.exports = async (req, res) => {
     const out = runs.flatMap((run) => {
       const artifacts = artifactsByRun.get(String(run.id)) || [];
       if (!artifacts.length) return [];
+      const commitMessage = String(run.head_commit?.message || '').split('\n')[0].trim();
       return [{
         id: run.id,
         run_number: run.run_number,
         run_attempt: run.run_attempt,
         name: run.name,
         head_branch: run.head_branch,
+        commit_message: commitMessage,
         event: run.event,
         status: run.status,
         conclusion: run.conclusion,
