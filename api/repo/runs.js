@@ -1,6 +1,8 @@
 const { gh, requireRepoAccess, json } = require('../_lib');
 const { normalizeArtifactPathRequest } = require('../_artifact-path');
 
+const PLANNED_STATUSES = new Set(['queued', 'requested', 'waiting', 'pending']);
+
 module.exports = async (req, res) => {
   const { repo, branch } = req.query;
   if (!/^[^/]+\/[^/]+$/.test(repo || '')) return json(res, 400, { error: 'invalid_repo' });
@@ -50,7 +52,8 @@ module.exports = async (req, res) => {
 
     const out = runs.flatMap((run) => {
       const artifacts = artifactsByRun.get(String(run.id)) || [];
-      if (!artifacts.length) return [];
+      const active = run.status && run.status !== 'completed';
+      if (!artifacts.length && !active) return [];
       const commitMessage = String(run.head_commit?.message || '').split('\n')[0].trim();
       return [{
         id: run.id,
@@ -62,6 +65,8 @@ module.exports = async (req, res) => {
         event: run.event,
         status: run.status,
         conclusion: run.conclusion,
+        planned: PLANNED_STATUSES.has(run.status),
+        active,
         created_at: run.created_at,
         updated_at: run.updated_at,
         html_url: run.html_url,
