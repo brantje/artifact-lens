@@ -3,6 +3,7 @@
   const originalPickArtifact = window.pickArtifact;
   let artifactViewMode = localStorage.getItem(STORAGE_KEY) === 'folders' ? 'folders' : 'flat';
   let lastArtifactFiles = null;
+  let currentFolderPath = [];
 
   function basename(path) {
     const parts = String(path || '').split('/').filter(Boolean);
@@ -51,6 +52,7 @@
   }
 
   function renderFlat(files, id) {
+    prepareImages(files, id);
     const media = files.filter((file) => file.media);
     const other = files.filter((file) => !file.media);
     return `<div class="media">${media.map((file) => renderMedia(id, file)).join('') || '<div class="muted">No embeddable media detected.</div>'}</div>${other.length ? `<h3>Other files</h3>${renderOtherFiles(other, id)}` : ''}`;
@@ -61,7 +63,7 @@
     for (const file of files) {
       const parts = String(file.name || '').split('/').filter(Boolean);
       if (!parts.length) continue;
-      const fileName = parts.pop();
+      parts.pop();
       let node = root;
       for (const part of parts) {
         if (!node.dirs.has(part)) {
@@ -70,7 +72,7 @@
         }
         node = node.dirs.get(part);
       }
-      node.files.push({ ...file, _basename: fileName });
+      node.files.push(file);
     }
     return root;
   }
@@ -81,52 +83,86 @@
     return count;
   }
 
-  function renderNodeFiles(node, id) {
-    const media = node.files.filter((file) => file.media);
-    const other = node.files.filter((file) => !file.media);
-    let html = '';
-    if (media.length) html += `<div class="media folder-media">${media.map((file) => renderFolderMedia(id, file)).join('')}</div>`;
-    if (other.length) html += renderOtherFiles(other, id, true);
-    return html;
+  function nodeAtPath(root, pathParts) {
+    let node = root;
+    for (const part of pathParts) {
+      node = node.dirs.get(part);
+      if (!node) return root;
+    }
+    return node;
   }
 
-  function renderFolderNode(node, id) {
-    const children = [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name));
-    const filesHtml = renderNodeFiles(node, id);
-    const childrenHtml = children.map((child) => renderFolderNode(child, id)).join('');
-    if (!node.path) {
-      const rootFiles = filesHtml ? `<section class="folder-root-files"><div class="folder-root-label">Root files</div>${filesHtml}</section>` : '';
-      return `${rootFiles}${childrenHtml || (!filesHtml ? '<div class="muted">No files found.</div>' : '')}`;
-    }
-    const count = descendantCount(node);
-    return `<details class="folder-group" open>
-      <summary><span class="folder-name">${esc(node.name)}</span><span class="folder-pattern">${esc(node.path)}/*</span><span class="folder-count">${count} file${count === 1 ? '' : 's'}</span></summary>
-      <div class="folder-contents">${filesHtml}${childrenHtml}</div>
-    </details>`;
+  function pathBreadcrumbHtml() {
+    const items = [`<button class="folder-path-part ${currentFolderPath.length ? '' : 'current'}" onclick="openArtifactFolderEncoded('')">Artifact</button>`];
+    let path = [];
+    currentFolderPath.forEach((part, index) => {
+      path.push(part);
+      items.push('<span class="folder-path-separator">/</span>');
+      items.push(`<button class="folder-path-part ${index === currentFolderPath.length - 1 ? 'current' : ''}" onclick="openArtifactFolderEncoded('${enc(path.join('/'))}')">${esc(part)}</button>`);
+    });
+    return `<nav class="folder-path" aria-label="Artifact folder path">${items.join('')}</nav>`;
+  }
+
+  function renderFolderRows(node) {
+    const folders = [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name));
+    if (!folders.length) return '';
+    return `<div class="folder-list">${folders.map((folder) => {
+      const count = descendantCount(folder);
+      return `<button class="folder-row" onclick="openArtifactFolderEncoded('${enc(folder.path)}')">
+        <span class="folder-icon" aria-hidden="true">📁</span>
+        <span class="folder-row-main"><span class="folder-row-name">${esc(folder.name)}</span><span class="folder-row-pattern muted">${esc(folder.path)}/*</span></span>
+        <span class="folder-row-count">${count} file${count === 1 ? '' : 's'}</span>
+        <span class="folder-row-arrow" aria-hidden="true">›</span>
+      </button>`;
+    }).join('')}</div>`;
+  }
+
+  function renderCurrentFolderFiles(node, id) {
+    const media = node.files.filter((file) => file.media);
+    const other = node.files.filter((file) => !file.media);
+    prepareImages(node.files, id);
+    if (!node.files.length) return '';
+    return `<section class="folder-files">
+      ${media.length ? `<div class="media">${media.map((file) => renderFolderMedia(id, file)).join('')}</div>` : ''}
+      ${other.length ? `<h3>Other files</h3>${renderOtherFiles(other, id, true)}` : ''}
+    </section>`;
   }
 
   function renderFolders(files, id) {
-    return `<div class="folder-view">${renderFolderNode(folderTree(files), id)}</div>`;
+    const tree = folderTree(files);
+    const node = nodeAtPath(tree, currentFolderPath);
+    const folderRows = renderFolderRows(node);
+    const fileRows = renderCurrentFolderFiles(node, id);
+    const empty = !folderRows && !fileRows ? '<div class="muted folder-empty">This folder is empty.</div>' : '';
+    return `<div class="folder-browser">${pathBreadcrumbHtml()}${folderRows}${fileRows}${empty}</div>`;
   }
 
   function renderArtifact(files) {
     if (!Array.isArray(files) || !S.artifact) return;
     const id = S.artifact.id;
-    prepareImages(files, id);
     const body = artifactViewMode === 'folders' ? renderFolders(files, id) : renderFlat(files, id);
     app.innerHTML = crumbs() + `<div class="row"><h2>${esc(S.artifact.name)}</h2>${toolbarHtml()}</div><div class="artifact-file-view">${body}</div>`;
   }
+
+  window.openArtifactFolderEncoded = function (encodedPath) {
+    const path = encodedPath ? decodeURIComponent(encodedPath) : '';
+    currentFolderPath = path.split('/').filter(Boolean);
+    if (lastArtifactFiles && S.artifact && artifactViewMode === 'folders') renderArtifact(lastArtifactFiles);
+  };
 
   window.setArtifactViewMode = function (mode) {
     if (!['flat', 'folders'].includes(mode)) return;
     artifactViewMode = mode;
     localStorage.setItem(STORAGE_KEY, mode);
+    if (mode === 'folders') currentFolderPath = [];
     if (lastArtifactFiles && S.artifact) renderArtifact(lastArtifactFiles);
   };
 
   window.pickArtifact = async function (...args) {
+    const previousArtifactId = S.artifact?.id;
     const files = await originalPickArtifact(...args);
     if (Array.isArray(files)) {
+      if (String(previousArtifactId || '') !== String(S.artifact?.id || '')) currentFolderPath = [];
       lastArtifactFiles = files;
       renderArtifact(files);
     }
