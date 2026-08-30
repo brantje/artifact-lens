@@ -55,7 +55,10 @@ module.exports = async (req, res) => {
       if (!artifacts.length) return [];
       return [{
         id: run.id,
+        run_number: run.run_number,
+        run_attempt: run.run_attempt,
         name: run.name,
+        head_branch: run.head_branch,
         event: run.event,
         status: run.status,
         conclusion: run.conclusion,
