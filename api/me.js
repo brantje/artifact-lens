@@ -1,4 +1,5 @@
 const { gh, requireAuth, readSession, readShareSession, publicArtifactAccess, json } = require('./_lib');
+const { normalizeArtifactPathRequest } = require('./_artifact-path');
 
 module.exports = async (req, res) => {
   if (readSession(req)) {
@@ -13,7 +14,7 @@ module.exports = async (req, res) => {
     }
   }
 
-  const publicAccess = await publicArtifactAccess(req);
+  const publicAccess = await publicArtifactAccess(normalizeArtifactPathRequest(req));
   if (publicAccess) {
     res.setHeader('Cache-Control', 'no-store');
     return json(res, 200, {
