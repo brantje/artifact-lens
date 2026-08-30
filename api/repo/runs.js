@@ -1,17 +1,15 @@
 const { gh, requireRepoAccess, json } = require('../_lib');
+const { normalizeArtifactPathRequest } = require('../_artifact-path');
 
 module.exports = async (req, res) => {
   const { repo, branch } = req.query;
   if (!/^[^/]+\/[^/]+$/.test(repo || '')) return json(res, 400, { error: 'invalid_repo' });
 
-  const access = await requireRepoAccess(req, res, { repo, branch: String(branch || '') });
+  const access = await requireRepoAccess(normalizeArtifactPathRequest(req), res, { repo, branch: String(branch || '') });
   if (!access) return;
 
   try {
-    const rr = await gh(
-      `/repos/${repo}/actions/runs?branch=${encodeURIComponent(branch || '')}&per_page=50`,
-      access.token
-    );
+    const rr = await gh(`/repos/${repo}/actions/runs?branch=${encodeURIComponent(branch || '')}&per_page=50`, access.token);
     const runData = await rr.json();
     let runs = runData.workflow_runs || [];
 
