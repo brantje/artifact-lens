@@ -19,6 +19,10 @@
       const run = runFromHandler(card.getAttribute('onclick'));
       if (!run) return;
 
+      // Mark first so mutations caused below cannot cause this card to be
+      // decorated again when the observer fires.
+      card.dataset.runLabels = '1';
+
       const row = card.querySelector(':scope > .row');
       const title = row?.querySelector('strong');
       if (title) title.textContent = runTitle(run);
@@ -34,8 +38,6 @@
       if (metadata[0] && run.head_branch) {
         metadata[0].textContent = `${run.head_branch} · ${metadata[0].textContent}`;
       }
-
-      card.dataset.runLabels = '1';
     });
   }
 
@@ -51,7 +53,10 @@
       const parsed = runFromHandler(handler);
       if (parsed) {
         run = parsed;
-        button.textContent = runTitle(parsed);
+        const title = runTitle(parsed);
+        // Setting textContent unconditionally triggers the MutationObserver,
+        // which previously caused an infinite callback loop on run pages.
+        if (button.textContent !== title) button.textContent = title;
       }
     });
 
@@ -60,6 +65,9 @@
     if (!headingRow?.classList.contains('row') || headingRow.dataset.runLabels === '1') return;
     const heading = headingRow.querySelector(':scope > h2');
     if (!heading) return;
+
+    // Mark before changing the DOM so observer callbacks are idempotent.
+    headingRow.dataset.runLabels = '1';
 
     const group = document.createElement('div');
     const workflow = document.createElement('div');
@@ -77,7 +85,6 @@
     group.appendChild(heading);
     group.appendChild(workflow);
     if (run.head_branch) group.appendChild(branch);
-    headingRow.dataset.runLabels = '1';
   }
 
   function decorate() {
