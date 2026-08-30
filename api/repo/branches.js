@@ -11,9 +11,13 @@ module.exports = async (req, res) => {
     const r = await gh(`/repos/${repo}/actions/artifacts?per_page=100`, access.token);
     const data = await r.json();
     const map = new Map();
-    const shareBranch = access.shared && access.share.scope !== 'repository' ? access.share.branch : null;
+    const share = access.shared ? access.share : null;
+    const shareBranch = share && share.scope !== 'repository' ? share.branch : null;
 
     for (const a of data.artifacts || []) {
+      if (share?.scope === 'artifact' && String(a.id) !== String(share.artifact_id)) continue;
+      if (share?.scope === 'run' && String(a.workflow_run?.id || '') !== String(share.run_id)) continue;
+
       const branch = a.workflow_run?.head_branch || '(unknown)';
       if (shareBranch && branch !== shareBranch) continue;
       const when = a.updated_at || a.created_at;
