@@ -1,13 +1,47 @@
 (() => {
   const STORAGE_KEY = 'artifactLensArtifactView';
   const originalPickArtifact = window.pickArtifact;
+  const originalSetArtifactViewMode = window.setArtifactViewMode;
   let artifactViewMode = localStorage.getItem(STORAGE_KEY) === 'folders' ? 'folders' : 'flat';
   let lastArtifactFiles = null;
   let currentFolderPath = [];
+  let appliedRoutePath = null;
+  let syncingRoute = false;
 
   function basename(path) {
     const parts = String(path || '').split('/').filter(Boolean);
     return parts[parts.length - 1] || String(path || '');
+  }
+
+  function artifactRouteInfo() {
+    const rawParts = location.pathname.split('/').filter(Boolean);
+    const decoded = [];
+    try {
+      for (const part of rawParts) decoded.push(decodeURIComponent(part));
+    } catch {
+      return null;
+    }
+
+    if (decoded[0] !== 'repo' || decoded[3] !== 'branch' || decoded[5] !== 'run' || decoded[7] !== 'artifact' || !decoded[8]) return null;
+    const basePath = '/' + rawParts.slice(0, 9).join('/');
+    if (decoded.length === 9) return { basePath, folderPath: '' };
+    if (decoded[9] !== 'path' || decoded.length < 11) return { basePath, folderPath: '' };
+    return { basePath, folderPath: decoded.slice(10).join('/') };
+  }
+
+  function folderRoute(path) {
+    const route = artifactRouteInfo();
+    if (!route) return null;
+    const parts = String(path || '').split('/').filter(Boolean);
+    return parts.length
+      ? `${route.basePath}/path/${parts.map((part) => encodeURIComponent(part)).join('/')}`
+      : route.basePath;
+  }
+
+  function updateFolderRoute(path, replace = false) {
+    const next = folderRoute(path);
+    if (!next || location.pathname === next) return;
+    history[replace ? 'replaceState' : 'pushState']({}, '', `${next}${location.search}${location.hash}`);
   }
 
   function toggleHtml() {
@@ -144,28 +178,70 @@
     app.innerHTML = crumbs() + `<div class="row"><h2>${esc(S.artifact.name)}</h2>${toolbarHtml()}</div><div class="artifact-file-view">${body}</div>`;
   }
 
+  function openFolderPath(path, { preserveRoute = false, replace = false } = {}) {
+    const normalized = String(path || '').split('/').filter(Boolean).join('/');
+    currentFolderPath = normalized ? normalized.split('/') : [];
+    appliedRoutePath = normalized;
+    if (!preserveRoute) updateFolderRoute(normalized, replace);
+    if (lastArtifactFiles && S.artifact && artifactViewMode === 'folders') renderArtifact(lastArtifactFiles);
+  }
+
   window.openArtifactFolderEncoded = function (encodedPath) {
     const path = encodedPath ? decodeURIComponent(encodedPath) : '';
-    currentFolderPath = path.split('/').filter(Boolean);
-    if (lastArtifactFiles && S.artifact && artifactViewMode === 'folders') renderArtifact(lastArtifactFiles);
+    openFolderPath(path);
   };
 
   window.setArtifactViewMode = function (mode) {
     if (!['flat', 'folders'].includes(mode)) return;
     artifactViewMode = mode;
     localStorage.setItem(STORAGE_KEY, mode);
-    if (mode === 'folders') currentFolderPath = [];
+    currentFolderPath = [];
+    appliedRoutePath = '';
+    updateFolderRoute('');
     if (lastArtifactFiles && S.artifact) renderArtifact(lastArtifactFiles);
   };
 
+  function syncFolderFromRoute() {
+    if (syncingRoute || !S.artifact || !lastArtifactFiles) return;
+    const route = artifactRouteInfo();
+    if (!route) return;
+    const desired = route.folderPath || '';
+    if (appliedRoutePath === desired) return;
+
+    syncingRoute = true;
+    try {
+      if (desired && artifactViewMode !== 'folders') {
+        artifactViewMode = 'folders';
+        localStorage.setItem(STORAGE_KEY, 'folders');
+      }
+      openFolderPath(desired, { preserveRoute: true });
+    } finally {
+      syncingRoute = false;
+    }
+  }
+
   window.pickArtifact = async function (...args) {
     const previousArtifactId = S.artifact?.id;
+    const opt = args[1] || {};
     const files = await originalPickArtifact(...args);
     if (Array.isArray(files)) {
-      if (String(previousArtifactId || '') !== String(S.artifact?.id || '')) currentFolderPath = [];
+      const artifactChanged = String(previousArtifactId || '') !== String(S.artifact?.id || '');
+      if (artifactChanged || !opt.preserveRoute) {
+        currentFolderPath = [];
+        appliedRoutePath = '';
+      }
       lastArtifactFiles = files;
       renderArtifact(files);
+      queueMicrotask(syncFolderFromRoute);
     }
     return files;
   };
+
+  window.addEventListener('popstate', () => {
+    appliedRoutePath = null;
+    setTimeout(syncFolderFromRoute, 0);
+  });
+
+  const observer = new MutationObserver(() => queueMicrotask(syncFolderFromRoute));
+  observer.observe(app, { childList: true, subtree: true });
 })();
