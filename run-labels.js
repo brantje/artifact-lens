@@ -19,8 +19,6 @@
       const run = runFromHandler(card.getAttribute('onclick'));
       if (!run) return;
 
-      // Mark first so mutations caused below cannot cause this card to be
-      // decorated again when the observer fires.
       card.dataset.runLabels = '1';
 
       const row = card.querySelector(':scope > .row');
@@ -28,10 +26,22 @@
       if (title) title.textContent = runTitle(run);
 
       if (row) {
+        let anchor = row;
+        if (run.commit_message) {
+          const commit = document.createElement('div');
+          commit.className = 'run-commit-message';
+          commit.textContent = run.commit_message;
+          commit.style.marginTop = '8px';
+          commit.style.fontWeight = '600';
+          anchor.insertAdjacentElement('afterend', commit);
+          anchor = commit;
+        }
+
         const workflow = document.createElement('div');
+        workflow.className = 'run-workflow-name';
         workflow.textContent = run.name || 'Workflow';
-        workflow.style.marginTop = '8px';
-        row.insertAdjacentElement('afterend', workflow);
+        workflow.style.marginTop = run.commit_message ? '5px' : '8px';
+        anchor.insertAdjacentElement('afterend', workflow);
       }
 
       const metadata = card.querySelectorAll(':scope > .muted');
@@ -71,16 +81,27 @@
     const branch = document.createElement('div');
 
     heading.textContent = runTitle(run);
+    headingRow.insertBefore(group, heading);
+    group.appendChild(heading);
+
+    if (run.commit_message) {
+      const commit = document.createElement('div');
+      commit.className = 'run-commit-message';
+      commit.textContent = run.commit_message;
+      commit.style.marginTop = '4px';
+      commit.style.fontWeight = '600';
+      group.appendChild(commit);
+    }
+
+    workflow.className = 'run-workflow-name';
     workflow.textContent = run.name || 'Workflow';
     workflow.style.marginTop = '4px';
+    group.appendChild(workflow);
+
     branch.className = 'muted';
     branch.style.marginTop = '4px';
     branch.style.fontSize = '13px';
     branch.textContent = run.head_branch || '';
-
-    headingRow.insertBefore(group, heading);
-    group.appendChild(heading);
-    group.appendChild(workflow);
     if (run.head_branch) group.appendChild(branch);
   }
 
