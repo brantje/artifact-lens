@@ -1,0 +1,2 @@
+const { gh, requireAuth, json } = require('./_lib');
+module.exports = async (req,res) => { const t=requireAuth(req,res); if(!t)return; try { const r=await gh('/user/repos?per_page=100&sort=updated&direction=desc&affiliation=owner,collaborator,organization_member',t); const rows=await r.json(); json(res,200,rows.map(x=>({full_name:x.full_name,private:x.private,updated_at:x.updated_at,default_branch:x.default_branch,description:x.description}))); } catch(e){ json(res,e.status||500,{error:e.message}); } };
