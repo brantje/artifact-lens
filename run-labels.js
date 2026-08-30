@@ -1,4 +1,6 @@
 (() => {
+  const PLANNED_STATUSES = new Set(['queued', 'requested', 'waiting', 'pending']);
+
   function runFromHandler(value) {
     const match = String(value || '').match(/pickRunEncoded\('([^']+)'\)/);
     if (!match) return null;
@@ -13,6 +15,27 @@
     return `Run #${run.id}`;
   }
 
+  function runState(run) {
+    const status = String(run.conclusion || run.status || 'unknown');
+    if (run.planned || PLANNED_STATUSES.has(status)) return { label: 'Planned', kind: 'planned' };
+    if (status === 'in_progress') return { label: 'Running', kind: 'running' };
+    return { label: status.replaceAll('_', ' '), kind: status };
+  }
+
+  function styleStatusBadge(badge, state) {
+    if (!badge) return;
+    badge.textContent = state.label;
+    if (state.kind === 'planned') {
+      badge.style.color = '#f2cf82';
+      badge.style.borderColor = '#6b5528';
+      badge.style.background = '#251d0c';
+    } else if (state.kind === 'running') {
+      badge.style.color = '#9ec8ff';
+      badge.style.borderColor = '#365a80';
+      badge.style.background = '#122238';
+    }
+  }
+
   function decorateRunCards() {
     document.querySelectorAll('#app .run').forEach((card) => {
       if (card.dataset.runLabels === '1') return;
@@ -24,6 +47,7 @@
       const row = card.querySelector(':scope > .row');
       const title = row?.querySelector('strong');
       if (title) title.textContent = runTitle(run);
+      styleStatusBadge(row?.querySelector('.badge'), runState(run));
 
       if (row) {
         let anchor = row;
@@ -45,8 +69,14 @@
       }
 
       const metadata = card.querySelectorAll(':scope > .muted');
-      if (metadata[0] && run.head_branch) {
-        metadata[0].textContent = `${run.head_branch} · ${metadata[0].textContent}`;
+      if (metadata[0]) {
+        if (run.active && !(run.artifacts || []).length) {
+          const state = runState(run);
+          const branch = run.head_branch ? `${run.head_branch} · ` : '';
+          metadata[0].textContent = `${branch}${state.label} · updated ${ago(run.updated_at)} · no artifacts yet`;
+        } else if (run.head_branch) {
+          metadata[0].textContent = `${run.head_branch} · ${metadata[0].textContent}`;
+        }
       }
     });
   }
@@ -84,6 +114,16 @@
     headingRow.insertBefore(group, heading);
     group.appendChild(heading);
 
+    if (run.active) {
+      const state = runState(run);
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.style.display = 'inline-block';
+      badge.style.marginTop = '4px';
+      styleStatusBadge(badge, state);
+      group.appendChild(badge);
+    }
+
     if (run.commit_message) {
       const commit = document.createElement('div');
       commit.className = 'run-commit-message';
@@ -103,6 +143,18 @@
     branch.style.fontSize = '13px';
     branch.textContent = run.head_branch || '';
     if (run.head_branch) group.appendChild(branch);
+
+    if (run.active && !(run.artifacts || []).length) {
+      const grid = headingRow.nextElementSibling;
+      if (grid?.classList.contains('grid') && !grid.children.length) {
+        const state = runState(run);
+        const pending = document.createElement('div');
+        pending.className = 'security-note';
+        pending.style.gridColumn = '1 / -1';
+        pending.innerHTML = `<strong>${state.label} run</strong><div class="muted" style="margin-top:5px">No artifacts have been published yet. They will appear here as soon as the workflow uploads them.</div>`;
+        grid.appendChild(pending);
+      }
+    }
   }
 
   function decorate() {
