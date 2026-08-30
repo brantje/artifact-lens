@@ -28,7 +28,7 @@ const preview = (name) => {
   const lower = String(name || '').toLowerCase();
   if (/\.(md|markdown|mdown|mkd)$/.test(lower)) return 'markdown';
   if (/\.(html?|xhtml)$/.test(lower)) return 'html';
-  if (/\.(txt|log|json|jsonl|xml|ya?ml|toml|ini|cfg|conf|csv|tsv|css|js|mjs|cjs|ts|tsx|jsx|py|rb|php|java|kt|kts|go|rs|c|cc|cpp|cxx|h|hh|hpp|hxx|sh|bash|zsh|fish|ps1|sql|graphql|gql|diff|patch|env|properties)$/.test(lower)) return 'text';
+  if (/\.(txt|log|json|jsonl|xml|trx|nunit|tap|t|ya?ml|toml|ini|cfg|conf|csv|tsv|css|js|mjs|cjs|ts|tsx|jsx|py|rb|php|java|kt|kts|go|rs|c|cc|cpp|cxx|h|hh|hpp|hxx|sh|bash|zsh|fish|ps1|sql|graphql|gql|diff|patch|env|properties)$/.test(lower)) return 'text';
   return null;
 };
 
