@@ -1,10 +1,11 @@
 const { gh, requireRepoAccess, json } = require('../_lib');
+const { normalizeArtifactPathRequest } = require('../_artifact-path');
 
 module.exports = async (req, res) => {
   const repo = req.query.repo;
   if (!/^[^/]+\/[^/]+$/.test(repo || '')) return json(res, 400, { error: 'invalid_repo' });
 
-  const access = await requireRepoAccess(req, res, { repo });
+  const access = await requireRepoAccess(normalizeArtifactPathRequest(req), res, { repo });
   if (!access) return;
 
   try {
