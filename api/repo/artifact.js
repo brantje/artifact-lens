@@ -2,6 +2,10 @@ const AdmZip = require('adm-zip');
 const { gh, requireRepoAccess, json } = require('../_lib');
 const { normalizeArtifactPathRequest } = require('../_artifact-path');
 
+const PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
+
+const extension = (name) => String(name).split('.').pop().toLowerCase();
+
 const mime = (name) => ({
   png: 'image/png',
   jpg: 'image/jpeg',
@@ -16,9 +20,18 @@ const mime = (name) => ({
   wav: 'audio/wav',
   ogg: 'audio/ogg',
   pdf: 'application/pdf',
-}[name.split('.').pop().toLowerCase()] || 'application/octet-stream');
+}[extension(name)] || 'application/octet-stream');
 
 const media = (name) => /\.(png|jpe?g|gif|webp|svg|mp4|webm|mov|mp3|wav|ogg|pdf)$/i.test(name);
+
+const preview = (name) => {
+  const lower = String(name || '').toLowerCase();
+  if (/\.(md|markdown|mdown|mkd)$/.test(lower)) return 'markdown';
+  if (/\.(html?|xhtml)$/.test(lower)) return 'html';
+  if (/\.(txt|log|json|jsonl|xml|ya?ml|toml|ini|cfg|conf|csv|tsv|css|js|mjs|cjs|ts|tsx|jsx|py|rb|php|java|kt|kts|go|rs|c|cc|cpp|cxx|h|hh|hpp|hxx|sh|bash|zsh|fish|ps1|sql|graphql|gql|diff|patch|env|properties)$/.test(lower)) return 'text';
+  return null;
+};
+
 const attachmentName = (name) => String(name).split('/').pop().replace(/[\r\n"]/g, '_') || 'download';
 
 module.exports = async (req, res) => {
@@ -52,20 +65,33 @@ module.exports = async (req, res) => {
     if (file) {
       const entry = entries.find((x) => x.entryName === file);
       if (!entry) return json(res, 404, { error: 'file_not_found' });
-      res.setHeader('Content-Type', mime(entry.entryName));
+      const previewType = preview(entry.entryName);
+      const isDownload = String(download) === '1';
+
+      res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Cache-Control', 'private, max-age=300');
-      if (String(download) === '1') {
+      res.setHeader('Content-Type', previewType && !isDownload ? 'text/plain; charset=utf-8' : mime(entry.entryName));
+
+      if (extension(entry.entryName) === 'svg') {
+        res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:");
+      }
+      if (isDownload) {
         res.setHeader('Content-Disposition', `attachment; filename="${attachmentName(entry.entryName)}"`);
       }
       return res.status(200).send(entry.getData());
     }
 
-    json(res, 200, entries.map((entry) => ({
-      name: entry.entryName,
-      size: entry.header.size,
-      media: media(entry.entryName),
-      mime: mime(entry.entryName),
-    })));
+    json(res, 200, entries.map((entry) => {
+      const previewType = preview(entry.entryName);
+      return {
+        name: entry.entryName,
+        size: entry.header.size,
+        media: media(entry.entryName),
+        mime: mime(entry.entryName),
+        preview: previewType,
+        previewable: Boolean(previewType && entry.header.size <= PREVIEW_MAX_BYTES),
+      };
+    }));
   } catch (e) {
     json(res, e.status || 500, { error: e.message });
   }
