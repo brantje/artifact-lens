@@ -1,4 +1,4 @@
-const { gh, requireAuth, readSession, readShareSession, json } = require('./_lib');
+const { gh, requireAuth, readSession, readShareSession, publicArtifactAccess, json } = require('./_lib');
 
 module.exports = async (req, res) => {
   if (readSession(req)) {
@@ -11,6 +11,18 @@ module.exports = async (req, res) => {
     } catch (e) {
       return json(res, e.status || 500, { error: e.message });
     }
+  }
+
+  const publicAccess = await publicArtifactAccess(req);
+  if (publicAccess) {
+    res.setHeader('Cache-Control', 'no-store');
+    return json(res, 200, {
+      shared: true,
+      public: true,
+      repo: publicAccess.share.repo,
+      scope: 'artifact',
+      expires_at: null,
+    });
   }
 
   const share = readShareSession(req);

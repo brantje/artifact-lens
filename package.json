@@ -5,7 +5,11 @@
   "engines": {
     "node": "24.x"
   },
+  "scripts": {
+    "test": "node --test"
+  },
   "dependencies": {
+    "@upstash/redis": "^1.38.3",
     "adm-zip": "^0.5.16"
   }
 }
