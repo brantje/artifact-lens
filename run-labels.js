@@ -10,7 +10,7 @@
   }
 
   function runTitle(run) {
-    return `Run #${run.run_number ?? run.id}`;
+    return `Run #${run.id}`;
   }
 
   function decorateRunCards() {
@@ -54,8 +54,6 @@
       if (parsed) {
         run = parsed;
         const title = runTitle(parsed);
-        // Setting textContent unconditionally triggers the MutationObserver,
-        // which previously caused an infinite callback loop on run pages.
         if (button.textContent !== title) button.textContent = title;
       }
     });
@@ -66,7 +64,6 @@
     const heading = headingRow.querySelector(':scope > h2');
     if (!heading) return;
 
-    // Mark before changing the DOM so observer callbacks are idempotent.
     headingRow.dataset.runLabels = '1';
 
     const group = document.createElement('div');
