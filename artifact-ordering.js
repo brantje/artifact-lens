@@ -1,14 +1,49 @@
 (() => {
   const STORAGE_KEY = 'artifactLensArtifactSort';
   const MODES = new Set(['name', 'artifact', 'size']);
-  const baseCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-  const tieBreaker = new Intl.Collator(undefined, { numeric: true, sensitivity: 'variant' });
+  const baseCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
+  const tieBreaker = new Intl.Collator(undefined, { sensitivity: 'variant' });
   let sortMode = MODES.has(localStorage.getItem(STORAGE_KEY)) ? localStorage.getItem(STORAGE_KEY) : 'name';
   let artifactFiles = [];
   let artifactOrder = new Map();
 
+  function naturalParts(value) {
+    return String(value || '').match(/\d+|\D+/g) || [];
+  }
+
   function compareNames(a, b) {
-    return baseCollator.compare(a, b) || tieBreaker.compare(a, b);
+    const left = naturalParts(a);
+    const right = naturalParts(b);
+    const length = Math.max(left.length, right.length);
+
+    for (let index = 0; index < length; index += 1) {
+      if (left[index] === undefined) return -1;
+      if (right[index] === undefined) return 1;
+
+      const leftPart = left[index];
+      const rightPart = right[index];
+      const leftNumber = /^\d+$/.test(leftPart);
+      const rightNumber = /^\d+$/.test(rightPart);
+
+      if (leftNumber && rightNumber) {
+        const leftValue = BigInt(leftPart);
+        const rightValue = BigInt(rightPart);
+        if (leftValue < rightValue) return -1;
+        if (leftValue > rightValue) return 1;
+        if (leftPart.length !== rightPart.length) return leftPart.length - rightPart.length;
+        continue;
+      }
+
+      if (leftNumber !== rightNumber) {
+        const mixed = baseCollator.compare(leftPart, rightPart);
+        if (mixed) return mixed;
+      } else {
+        const compared = baseCollator.compare(leftPart, rightPart) || tieBreaker.compare(leftPart, rightPart);
+        if (compared) return compared;
+      }
+    }
+
+    return tieBreaker.compare(String(a || ''), String(b || ''));
   }
 
   function normalizeName(value) {
