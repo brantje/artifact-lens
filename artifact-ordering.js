@@ -79,7 +79,11 @@
 
   function reorder(container, entries, comparator) {
     if (!container || entries.length < 2) return;
-    entries.sort(comparator).forEach((entry) => container.appendChild(entry.node));
+    const current = entries.map((entry) => entry.node);
+    const sorted = [...entries].sort(comparator).map((entry) => entry.node);
+    const changed = sorted.some((node, index) => node !== current[index]);
+    if (!changed) return;
+    sorted.forEach((node) => container.appendChild(node));
   }
 
   function sortMedia() {
