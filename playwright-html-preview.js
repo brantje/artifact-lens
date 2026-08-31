@@ -18,8 +18,9 @@
   }
 
   function isPlaywrightReport(source) {
-    return /<title>\s*Playwright Test Report\s*<\/title>/i.test(source)
-      || /playwright-report/i.test(source) && /<script\b[^>]*type=["']module["']/i.test(source);
+    return /Playwright\s+Test\s+Report/i.test(source)
+      || /playwrightReportBase64/i.test(source)
+      || (/playwright-report/i.test(source) && /<script\b/i.test(source));
   }
 
   function sourceView(source) {
@@ -29,10 +30,15 @@
     return pre;
   }
 
-  function withRestrictedCsp(source) {
-    const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' blob: data:; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data: blob:; connect-src data: blob:; worker-src blob:; child-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">`;
-    if (/<head\b[^>]*>/i.test(source)) return source.replace(/<head\b[^>]*>/i, (head) => `${head}${csp}`);
-    return `<!doctype html><html><head>${csp}</head><body>${source}</body></html>`;
+  function runtimeShim() {
+    return `<script>(function(){function memoryStorage(){var values=new Map();return{get length(){return values.size},key:function(i){return Array.from(values.keys())[i]??null},getItem:function(k){k=String(k);return values.has(k)?values.get(k):null},setItem:function(k,v){values.set(String(k),String(v))},removeItem:function(k){values.delete(String(k))},clear:function(){values.clear()}}}for(var name of ['localStorage','sessionStorage']){try{Object.defineProperty(window,name,{configurable:true,value:memoryStorage()})}catch(e){try{Object.defineProperty(Window.prototype,name,{configurable:true,get:function(){return memoryStorage()}})}catch(_){}}}})();<\/script>`;
+  }
+
+  function withRestrictedRuntime(source) {
+    const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob: data:; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data: blob:; connect-src data: blob:; worker-src blob: data:; child-src blob: data:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'">`;
+    const injected = `${csp}${runtimeShim()}`;
+    if (/<head\b[^>]*>/i.test(source)) return source.replace(/<head\b[^>]*>/i, (head) => `${head}${injected}`);
+    return `<!doctype html><html><head>${injected}</head><body>${source}</body></html>`;
   }
 
   function renderedView(source, file) {
@@ -41,7 +47,7 @@
     iframe.setAttribute('sandbox', 'allow-scripts');
     iframe.setAttribute('referrerpolicy', 'no-referrer');
     iframe.title = `${file.name} Playwright report`;
-    iframe.srcdoc = withRestrictedCsp(source);
+    iframe.srcdoc = withRestrictedRuntime(source);
     return iframe;
   }
 
@@ -73,7 +79,7 @@
 
       state = { file, source, mode: 'rendered' };
       title.textContent = file.name.split('/').pop() || file.name;
-      meta.textContent = `${file.name} · ${Math.round(file.size / 1024)} KB · Playwright HTML report`;
+      meta.textContent = `${file.name} · ${Math.round(file.size / 1024)} KB · Playwright HTML report · isolated runtime`;
       download.href = artifactFileUrl(S.artifact.id, file.name, true);
       tabs.classList.remove('hidden');
       modal.classList.remove('hidden');
